@@ -1,0 +1,5 @@
+{
+  "name": "session-goal",
+  "owner": { "name": "YH-Seo" },
+  "plugins": [{ "name": "session-goal", "source": "./" }]
+}
