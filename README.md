@@ -29,8 +29,11 @@ claude plugin install session-goal --marketplace YH-Seo/session-goal
 
 After each answered turn, one extra model call reads the conversation and judges the goal. When it looks met, the band above the prompt shows the reason with two buttons: finish and open a new session, or reject the verdict.
 
+When you finish, Claude writes a handoff prompt in a ```` ```handoff ```` block. The new session opens with that prompt already in its input box (`claude://code/new?q=...`), so you only press send. With no block, the new session opens empty.
+
 ## Limits
 
 - Opening a new session uses the `claude://code/new` link through macOS `open`, so that button works on macOS with the Claude desktop app only.
 - The automatic judgement adds one model call per turn in sessions that have a goal.
+- The handoff is cut at 4,000 characters to keep the link short.
 - The UI text is in Korean.

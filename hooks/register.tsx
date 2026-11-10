@@ -79,25 +79,49 @@ const setGoal = async ($: EngineInterface, text: string) => {
   )
 }
 
-const finishGoal = async ($: EngineInterface, target: Goal) => {
-  await update($, goal, () => ({ ...target, status: 'done' }))
+const finishGoal = async (
+  $: EngineInterface,
+  target: Goal,
+  isOpenPending = false,
+) => {
+  await update($, goal, () => ({
+    ...target,
+    status: 'done' as const,
+    isOpenPending,
+  }))
   await update($, skipNextJudgement, () => true)
   askClaude(
     $,
     [
       `세션 목표가 완료 처리됐습니다: ${target.text}`,
       `1. mcp__ccd_session_mgmt__set_session_title로 이 세션(session_id "self")의 제목을 "[완료] ${titleOf(target.text)}"로 바꾸세요.`,
-      '2. 다음 세션에 넘길 맥락이 있으면 세 줄 이내로 정리하세요.',
-      '새 세션 안내는 입력창 위 띠가 맡습니다. new_session 액션은 쓰지 마세요.',
+      '2. 다음 세션에 넘길 일이 있으면, 새 세션의 첫 메시지로 그대로 쓸 인계 프롬프트를 ```handoff 코드 블록 하나에 쓰세요.',
+      '   이 대화를 못 본 사람도 이해하게 남은 일·관련 파일·결정 사항·끝난 상태를 담고, 넘길 일이 없으면 블록을 쓰지 마세요.',
+      '새 세션은 입력창 위 띠가 인계 프롬프트를 채워 엽니다. new_session 액션은 쓰지 마세요.',
       '추가 작업은 시작하지 마세요.',
     ].join('\n'),
   )
 }
 
 const NEW_SESSION_URL = 'claude://code/new?source=desktop_action'
+// Long deep links can be cut by the OS; keep the prefilled prompt short enough.
+const MAX_HANDOFF_LENGTH = 4000
 
-const openNewSession = async ($: EngineInterface) => {
-  const { exitCode } = await $.process.run(['open', NEW_SESSION_URL])
+const HANDOFF_BLOCK = /```handoff[^\n]*\n([\s\S]*?)\n```/
+
+export const parseHandoff = (text: string) => {
+  const body = HANDOFF_BLOCK.exec(text)?.[1]?.trim()
+
+  return body ? body.slice(0, MAX_HANDOFF_LENGTH) : null
+}
+
+export const newSessionUrl = (handoff?: string) =>
+  handoff
+    ? `${NEW_SESSION_URL}&q=${encodeURIComponent(handoff)}`
+    : NEW_SESSION_URL
+
+const openNewSession = async ($: EngineInterface, handoff?: string) => {
+  const { exitCode } = await $.process.run(['open', newSessionUrl(handoff)])
 
   if (exitCode !== 0) {
     $.ui.toast('session-goal: 새 세션 화면을 열지 못했습니다. 사이드바에서 시작해 주세요.')
@@ -162,6 +186,24 @@ export const register: Register = on => {
       return result
     }
 
+    const finished = await read($, goal)
+
+    if (finished?.status === 'done' && finished.handoff === undefined) {
+      const handoff = parseHandoff(result.text)
+
+      if (handoff !== null || finished.isOpenPending) {
+        await update($, goal, current =>
+          current === null
+            ? current
+            : { ...current, handoff: handoff ?? '', isOpenPending: false },
+        )
+      }
+
+      if (finished.isOpenPending) {
+        await openNewSession($, handoff ?? undefined)
+      }
+    }
+
     if (await read($, skipNextJudgement)) {
       await update($, skipNextJudgement, () => false)
 
@@ -212,8 +254,8 @@ export const register: Register = on => {
           <Text dimColor>목표 완료: {current.text} </Text>
           <Button
             key="new-session"
-            label="새 세션 열기"
-            onPress={() => openNewSession($)}
+            label={current.handoff ? '인계해서 새 세션 열기' : '새 세션 열기'}
+            onPress={() => openNewSession($, current.handoff || undefined)}
           />
         </Box>
       )
@@ -229,8 +271,8 @@ export const register: Register = on => {
               key="finish"
               label="완료하고 새 세션으로"
               onPress={async () => {
-                await finishGoal($, current)
-                await openNewSession($)
+                // Opens once Claude has written the handoff (turn.complete).
+                await finishGoal($, current, true)
               }}
             />
             <Button

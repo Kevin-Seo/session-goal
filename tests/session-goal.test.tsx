@@ -28,6 +28,7 @@ const setUp = async ($: Engine, on: On, verdict: string) => {
   const clock = mock.clock(on)
   const prompts: string[] = []
   let judgements = 0
+  let answer = ''
 
   on('ui.toast', (_, e) => {
     prompts.push(`toast: ${JSON.stringify(e)}`)
@@ -54,7 +55,7 @@ const setUp = async ($: Engine, on: On, verdict: string) => {
 
     return { text: e.text }
   })
-  on('turn.complete', () => ({ text: '' }))
+  on('turn.complete', () => ({ text: answer }))
   on('model.fork', () => {
     judgements += 1
 
@@ -70,7 +71,14 @@ const setUp = async ($: Engine, on: On, verdict: string) => {
   })
   await clock.advance(0)
 
-  return { clock, prompts, judgements: () => judgements }
+  return {
+    clock,
+    prompts,
+    judgements: () => judgements,
+    answerWith: (text: string) => {
+      answer = text
+    },
+  }
 }
 
 const USAGE = {
@@ -90,7 +98,11 @@ test('setting a goal asks for the title and skips judging that turn', async ($, 
 })
 
 test('a MET verdict offers a new session and starts no work', async ($, on) => {
-  const { clock, prompts, judgements } = await setUp($, on, 'MET: fixed')
+  const { clock, prompts, judgements, answerWith } = await setUp(
+    $,
+    on,
+    'MET: fixed',
+  )
 
   await $.turn.complete(TURN)
   await $.turn.complete({ ...TURN, turnId: 't2' })
@@ -103,8 +115,15 @@ test('a MET verdict offers a new session and starts no work', async ($, on) => {
   expect((await ui.find({ type: 'Text', text: /달성/ }))?.text).toContain('로그인')
   await ui.press({ key: 'finish' })
   await clock.advance(0)
-  expect(prompts).toContain('open: open claude://code/new?source=desktop_action')
+  expect(prompts.some(text => text.startsWith('open:'))).toBe(false)
   expect(prompts.some(text => text.includes('[완료]'))).toBe(true)
+
+  answerWith('정리했습니다.\n\n```handoff\n남은 일: 배포 확인\n```\n')
+  await $.turn.complete({ ...TURN, turnId: 't3' })
+  await clock.advance(0)
+  expect(prompts).toContain(
+    `open: open claude://code/new?source=desktop_action&q=${encodeURIComponent('남은 일: 배포 확인')}`,
+  )
   await ui.unmount()
 })
 
@@ -134,4 +153,24 @@ test('a built-in goal name is not registered', async ($, on) => {
   await $.session.start({ cwd: '/', surface: 'desktop', isInteractive: true })
   expect(names.includes('goal')).toBe(false)
   expect(names).toEqual(['session-goal', 'session-done'])
+})
+
+test('without a handoff block the new session opens empty', async ($, on) => {
+  const { clock, prompts } = await setUp($, on, 'MET: fixed')
+
+  await $.command.run({
+    command: 'session-done',
+    args: '',
+    origin: { kind: 'composer' },
+    presentation: { isFullscreen: false, columns: 80 },
+  })
+  await clock.advance(0)
+  await $.turn.complete(TURN)
+  await clock.advance(0)
+
+  const ui = await $.ui.mount(BAND)
+
+  await ui.press({ key: 'new-session' })
+  expect(prompts).toContain('open: open claude://code/new?source=desktop_action')
+  await ui.unmount()
 })

@@ -3,6 +3,10 @@ export type Goal = {
   status: 'active' | 'met' | 'done'
   reason?: string
   isRejected?: boolean
+  /** Prompt to prefill in the next session; '' when Claude wrote none. */
+  handoff?: string
+  /** Open the new session as soon as the handoff turn ends. */
+  isOpenPending?: boolean
 }
 
 declare module 'claude-code' {
